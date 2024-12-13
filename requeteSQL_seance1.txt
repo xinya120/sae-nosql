@@ -1,0 +1,472 @@
+import pandas as pd
+
+import sqlite3
+
+ 
+
+ 
+
+# Création de la connexion à la base de données SQLite
+
+conn = sqlite3.connect("ClassicModel.sqlite")
+
+ 
+
+# 1. Lister les clients n'ayant jamais effectué une commande
+
+no_orders_customers = pd.read_sql_query(
+
+    """
+
+    SELECT c.customerNumber, c.customerName
+
+    FROM Customers c
+
+    LEFT JOIN Orders o ON c.customerNumber = o.customerNumber
+
+    WHERE o.customerNumber IS NULL;
+
+    """, conn)
+
+print(no_orders_customers)
+
+ 
+
+# 2. Pour chaque employé, le nombre de clients, le nombre de commandes et le montant total de celles-ci
+
+employee_stats = pd.read_sql_query(
+
+    """
+
+    SELECT e.employeeNumber, e.lastName, e.firstName, COUNT(DISTINCT c.customerNumber) AS number_of_clients,
+
+           COUNT(DISTINCT o.orderNumber) AS number_of_orders, SUM(p.amount) AS total_amount
+
+    FROM Employees e
+
+    LEFT JOIN Customers c ON e.employeeNumber = c.salesRepEmployeeNumber
+
+    LEFT JOIN Orders o ON c.customerNumber = o.customerNumber
+
+    LEFT JOIN Payments p ON c.customerNumber = p.customerNumber
+
+    GROUP BY e.employeeNumber;
+
+    """, conn)
+
+print(employee_stats)
+
+ 
+
+# 3. Pour chaque bureau : nombre de clients, de commandes, montant total et nombre de clients étrangers
+
+office_stats = pd.read_sql_query(
+
+    """
+
+    SELECT o.officeCode, o.city, o.country AS officeCountry, COUNT(DISTINCT c.customerNumber) AS NumberOfCustomer,
+
+           COUNT(DISTINCT od.orderNumber) AS NumberOfOrder, SUM(p.amount) AS total_amount,
+
+           COUNT(DISTINCT CASE WHEN c.country != o.country THEN c.customerNumber ELSE NULL END) AS foreign_customers
+
+    FROM Offices o
+
+    LEFT JOIN Employees e ON o.officeCode = e.officeCode
+
+    LEFT JOIN Customers c ON e.employeeNumber = c.salesRepEmployeeNumber
+
+    LEFT JOIN Orders od ON c.customerNumber = od.customerNumber
+
+    LEFT JOIN Payments p ON c.customerNumber = p.customerNumber
+
+    GROUP BY o.officeCode;
+
+    """, conn)
+
+print(office_stats)
+
+ 
+
+# 4. Pour chaque produit : nombre de commandes, quantité totale commandée, et nombre de clients différents
+
+product_stats = pd.read_sql_query(
+
+    """
+
+    SELECT p.productCode, p.productName, COUNT(DISTINCT od.orderNumber) AS number_of_orders,
+
+           SUM(od.quantityOrdered) AS total_quantity, COUNT(DISTINCT o.customerNumber) AS number_of_customers
+
+    FROM Products p
+
+    LEFT JOIN OrderDetails od ON p.productCode = od.productCode
+
+    LEFT JOIN Orders o ON od.orderNumber = o.orderNumber
+
+    GROUP BY p.productCode;
+
+    """, conn)
+
+print(product_stats)
+
+ 
+
+# 5. Pour chaque pays : nombre de commandes, montant total des commandes et montant total payé (incluant clients sans commandes)
+
+country_stats = pd.read_sql_query(
+
+    """
+
+    SELECT c.country, COUNT(DISTINCT o.orderNumber) AS number_of_orders,
+
+           SUM(od.quantityOrdered * od.priceEach) AS total_order_amount, SUM(p.amount) AS total_paid
+
+    FROM Customers c
+
+    LEFT JOIN Orders o ON c.customerNumber = o.customerNumber
+
+    LEFT JOIN OrderDetails od ON o.orderNumber = od.orderNumber
+
+    LEFT JOIN Payments p ON c.customerNumber = p.customerNumber
+
+    GROUP BY c.country;
+
+    """, conn)
+
+print(country_stats)
+
+ 
+
+# 6. Table de contingence du nombre de commandes entre la ligne de produits (à partir de Products) et le pays du client
+
+contingency_table_orders = pd.read_sql_query(
+
+    """
+
+    SELECT p.productLine, c.country, COUNT(DISTINCT od.orderNumber) AS number_of_orders
+
+    FROM Products p
+
+    JOIN OrderDetails od ON p.productCode = od.productCode
+
+    JOIN Orders o ON od.orderNumber = o.orderNumber
+
+    JOIN Customers c ON o.customerNumber = c.customerNumber
+
+    GROUP BY p.productLine, c.country;
+
+    """, conn)
+
+print(contingency_table_orders)
+
+ 
+
+ 
+
+# 7. Table de contingence croisant la ligne de produits et le pays du client, avec le montant total payé dans chaque cellule
+
+contingency_table_paid = pd.read_sql_query(
+
+    """
+
+    SELECT p.productLine, c.country, SUM(pmt.amount) AS total_paid
+
+    FROM Products p
+
+    JOIN OrderDetails od ON p.productCode = od.productCode
+
+    JOIN Orders o ON od.orderNumber = o.orderNumber
+
+    JOIN Customers c ON o.customerNumber = c.customerNumber
+
+    JOIN Payments pmt ON c.customerNumber = pmt.customerNumber
+
+    GROUP BY p.productLine, c.country;
+
+    """, conn)
+
+print(contingency_table_paid)
+
+ 
+
+ 
+
+# 8. Les 10 produits avec la marge moyenne la plus importante
+
+top_margin_products = pd.read_sql_query(
+
+    """
+
+    SELECT p.productCode, p.productName, AVG(od.priceEach - p.buyPrice) AS average_margin
+
+    FROM Products p
+
+    JOIN OrderDetails od ON p.productCode = od.productCode
+
+    GROUP BY p.productCode
+
+    ORDER BY average_margin DESC
+
+    LIMIT 10;
+
+    """, conn)
+
+print("\nTop 10 des produits avec la plus grande marge moyenne :")
+
+print(top_margin_products)
+
+ 
+
+# 9. Lister les produits vendus à perte (prix de vente inférieur au prix d'achat)
+
+sold_at_loss = pd.read_sql_query(
+
+    """
+
+    SELECT p.productCode, p.productName, c.customerName, od.priceEach, p.buyPrice
+
+    FROM Products p
+
+    JOIN OrderDetails od ON p.productCode = od.productCode
+
+    JOIN Orders o ON od.orderNumber = o.orderNumber
+
+    JOIN Customers c ON o.customerNumber = c.customerNumber
+
+    WHERE od.priceEach < p.buyPrice;
+
+    """, conn)
+
+print(sold_at_loss)
+
+ 
+
+# 10. (Bonus) Clients dont le montant total payé est supérieur au montant total des achats
+
+high_paying_customers = pd.read_sql_query(
+
+    """
+
+    SELECT c.customerNumber, c.customerName, SUM(p.amount) AS total_paid,
+
+           SUM(od.quantityOrdered * od.priceEach) AS total_orders
+
+    FROM Customers c
+
+    LEFT JOIN Orders o ON c.customerNumber = o.customerNumber
+
+    LEFT JOIN OrderDetails od ON o.orderNumber = od.orderNumber
+
+    LEFT JOIN Payments p ON c.customerNumber = p.customerNumber
+
+    GROUP BY c.customerNumber
+
+    HAVING total_paid > total_orders;
+
+    """, conn)
+
+print(high_paying_customers)
+
+ 
+
+# Fermeture de la connexion
+
+conn.close()
+
+De : Guillemette NAAL <guillemette.naal@etu.u-paris.fr>
+Date : mardi, 17 septembre 2024 à 16:32
+À : Bingxin YE <bingxin.ye@etu.u-paris.fr>, guillemetteperrin@gmail.com <guillemetteperrin@gmail.com>
+Objet : <aucun objet>
+
+ 
+
+# Importation des modules utilisés
+
+import sqlite3
+
+import pandas
+
+ 
+
+# Création de la connexion
+
+conn = sqlite3.connect("ClassicModel.sqlite")
+
+ 
+
+# Récupération du contenu de Customers avec une requête SQL
+
+customers = pandas.read_sql_query(
+
+ 
+
+    """SELECT * FROM Customers left join orders on Customers.customerNumber = orders.customerNumber where orders.customerNumber is NULL;"""
+
+    , conn)
+
+print(customers)
+
+ 
+
+ 
+
+ 
+
+ 
+
+#SELECT * FROM Customers left join orders on Customers.customerNumber = orders.customerNumber;
+
+ 
+
+# employees = pandas.read_sql_query(
+
+ 
+
+#    """SELECT e.employeeNumber, e.firstname, e.lastname, count(distinct c.customeNumber) AS 1, ....,
+
+#    FROM employees
+
+#    left join Customers c on c.customeNumber = o.customeNumber
+
+ #   etc
+
+#    left join order o on e.employeenumber = c.salesRepemployeenumber ;"""
+
+#    , conn)
+
+# print(employees)
+
+ 
+
+ 
+
+#SELECT * FROM office left join orders on Customers.customerNumber = orders.customerNumber;
+
+ 
+
+office = pandas.read_sql_query("""
+
+    SELECT
+
+        o.officeCode,
+
+        o.city,
+
+        o.country AS officeCountry,
+
+        count(distinct c.customerNumber) AS NumberOfCustomer,
+
+        count(distinct od.orderNumber) AS NumberOfOrder,
+
+        sum(p.amount) AS montant,
+
+        CASE
+
+            WHEN o.country != c.country THEN count(distinct c.customerNumber)
+
+            ELSE NULL
+
+        END AS nbofdiffcountry
+
+    FROM
+
+        Offices AS o
+
+    LEFT JOIN Employees AS e ON o.officeCode = e.officeCode
+
+    LEFT JOIN Customers AS c ON e.employeeNumber = c.salesRepEmployeeNumber
+
+    LEFT JOIN Orders AS od ON c.customerNumber = od.customerNumber
+
+    LEFT JOIN Payments AS p ON od.customerNumber = p.customerNumber
+
+    GROUP BY
+
+        o.officeCode, o.city, o.country;
+
+""", conn)
+
+ 
+
+print(office)
+
+ 
+
+ 
+
+ 
+
+products = pandas.read_sql_query("""
+
+    SELECT
+
+    p.productCode,
+
+    p.productName,
+
+    COUNT(DISTINCT od.orderNumber) AS NumberOfOrder,
+
+    count(distinct o.customerNumber) AS NumberOfCustomer,
+
+    SUM(od.quantityOrdered) total
+
+   
+
+    FROM
+
+        products AS p
+
+    LEFT JOIN OrderDetails AS od ON p.productCode = od.productCode
+
+    LEFT JOIN Orders AS o ON od.orderNumber = o.orderNumber
+
+    GROUP BY
+
+        p.productCode, p.productName;
+
+""", conn)
+
+ 
+
+print(products)
+
+ 
+
+ 
+
+ 
+
+commpandepays = pandas.read_sql_query("""
+
+    SELECT
+
+    p.productCode,
+
+    p.productName,
+
+    COUNT(DISTINCT od.orderNumber) AS NumberOfOrder,
+
+    count(distinct o.customerNumber) AS NumberOfCustomer,
+
+    SUM(od.quantityOrdered) total
+
+   
+
+    FROM
+
+        products AS p
+
+    LEFT JOIN OrderDetails AS od ON p.productCode = od.productCode
+
+    LEFT JOIN Orders AS o ON od.orderNumber = o.orderNumber
+
+    GROUP BY
+
+        p.productCode, p.productName;
+
+""", conn)
+
+ 
+
+print(products)
